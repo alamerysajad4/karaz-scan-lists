@@ -231,7 +231,9 @@ function homeView() {
       h('div', { class: 'bar' }, h('i', { style: { width: (bc / (t || 1) * 100) + '%' } })),
       h('div', { class: 'sub' }, bc + ' / ' + t + ' بيها باركود'));
   })));
-  const dock = h('div', { class: 'dock' }, h('div', { class: 'wrap' }, h('button', { class: 'btn primary block', onclick: () => $('#fileIn').click() }, '📄 استيراد قوائم (Excel أو zip)')));
+  const dock = h('div', { class: 'dock' }, h('div', { class: 'wrap' },
+    h('button', { class: 'btn primary block', onclick: () => $('#fileIn').click() }, '📄 استيراد قوائم (Excel أو zip)'),
+    DB.lists.length > 1 ? h('button', { class: 'btn block', style: { marginTop: '8px' }, onclick: () => exportAllSheet() }, '📤 ملف واحد لكل القوائم') : null));
   return h('div', {}, head, body, dock);
 }
 function filtered(l) {
@@ -536,6 +538,49 @@ function exportSheet(l) {
     h('button', { class: 'btn' + (navigator.canShare ? '' : ' primary'), onclick: () => { const a = h('a', { href: URL.createObjectURL(file), download: fname }); document.body.append(a); a.click(); a.remove(); } }, '⬇ تنزيل CSV'),
     h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(tsvRows); toast('انسخت الأسطر (بدون العناوين)', 'ok'); } catch (e) { toast('النسخ ما اشتغل', 'err'); } } }, '📋 نسخ الأسطر'),
     h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(tsvAll); toast('انسخ الجدول مع العناوين', 'ok'); } catch (e) { toast('النسخ ما اشتغل', 'err'); } } }, '📋 نسخ مع العناوين')]);
+}
+
+function exportAllSheet() {
+  const lists = DB.lists.filter(l => l.items.some(it => it.status !== 'miss'));
+  if (!lists.length) { toast('ماكو مواد للتصدير', 'err'); return; }
+  const all = () => lists.map(l => ({ l, rows: posRows(l) }));
+  const fname = 'كل-القوائم-للبرنامج.csv';
+  const mkFile = () => {
+    const rows = all().flatMap(x => x.rows.map(r => r.cells));
+    const csv = '\ufeff' + [POS_HEAD, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+    return new File([csv], fname, { type: 'text/csv' });
+  };
+  const summary = h('div');
+  const drawSum = () => {
+    const x = all(), rows = x.flatMap(y => y.rows);
+    const nobc = rows.filter(r => !r.cells[0]).length;
+    const guess = rows.filter(r => r.guess).length;
+    const nopack = x.flatMap(y => y.rows.filter(r => info(y.l, r.it).cartons > 0 && !(r.it.pack > 1))).length;
+    summary.replaceChildren(h('div', { class: 'note ' + (nobc || guess || nopack ? 'warn' : 'ok') },
+      lists.length + ' قائمة · ' + rows.length + ' مادة بملف واحد. ' +
+      (nobc ? nobc + ' بدون باركود. ' : '') + (nopack ? nopack + ' ناقصها «قطع بالكرتون». ' : '') +
+      (guess ? guess + (SELLMODE === 'guess' ? ' بدون سعر بيع (ينحط مقترح +' + MARKUP + '%).' : ' بدون سعر بيع — تنحفظ فارغة وتتسعّر بعدين بالبرنامج.') : 'كل الأسعار مكتوبة ✓')),
+      h('div', { class: 'sub', style: { marginTop: '8px' } }, x.map(y => h('div', {}, '• ' + y.l.name + ' — ' + y.rows.length + ' مادة'))));
+  };
+  const mk = h('input', { type: 'text', inputmode: 'numeric', value: MARKUP, style: { maxWidth: '90px' } });
+  const mkWrap = h('label', { class: 'fld' + (SELLMODE === 'guess' ? '' : ' hidden') }, h('span', {}, 'نسبة الربح %'), mk);
+  const sm = h('select', {}, h('option', { value: 'empty' }, 'اتركه فارغ — نسعّر بعدين بالبرنامج'), h('option', { value: 'guess' }, 'حط سعر مقترح بنسبة ربح'));
+  sm.value = SELLMODE;
+  sm.addEventListener('change', () => { SELLMODE = sm.value; localStorage.setItem('scan_sellmode', SELLMODE); mkWrap.classList.toggle('hidden', SELLMODE !== 'guess'); drawSum(); });
+  mk.addEventListener('input', () => { MARKUP = numv(mk.value) || 0; localStorage.setItem('scan_markup', MARKUP); drawSum(); });
+  drawSum();
+  const f0 = mkFile();
+  sheet('📤 كل القوائم بملف واحد', h('div', {},
+    summary,
+    h('label', { class: 'fld' }, h('span', {}, 'المواد اللي ما كتبت سعر بيعها'), sm), mkWrap,
+    h('div', { class: 'note info' }, 'هذا الزر بس يسوي ملف — ما يمسح ولا يغيّر ولا قائمة. القوائم تبقى بالتطبيق وعند الجماعة مثل ما هي.'),
+    h('div', { class: 'note info' }, 'دزه بالواتساب لحاسبة المحل ← نزّله ← بالبرنامج: المخزون والجرد ← إدخال منتجات (جدول) ← «📂 فتح ملف» ← حفظ الكل.')), [
+    navigator.canShare && navigator.canShare({ files: [f0] })
+      ? h('button', { class: 'btn primary', onclick: async () => { try { await navigator.share({ files: [mkFile()], title: fname }); } catch (e) { /* */ } } }, '📤 أرسل الملف')
+      : null,
+    h('button', { class: 'btn' + (navigator.canShare ? '' : ' primary'), onclick: () => { const a = h('a', { href: URL.createObjectURL(mkFile()), download: fname }); document.body.append(a); a.click(); a.remove(); } }, '⬇ تنزيل الملف'),
+    h('button', { class: 'btn', onclick: async () => { const t = all().flatMap(x => x.rows).map(r => r.cells.map(v => String(v).replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
+      try { await navigator.clipboard.writeText(t); toast('انسخت — الصقها بأول خانة باركود بالجدول', 'ok'); } catch (e) { toast('النسخ ما اشتغل', 'err'); } } }, '📋 نسخ للبرنامج')]);
 }
 
 /* ================= تشغيل ================= */
