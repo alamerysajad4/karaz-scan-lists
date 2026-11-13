@@ -74,13 +74,15 @@ async function unzip(buf) {
     files[name] = { method, csize, off };
     p += 46 + nlen + xlen + clen;
   }
-  return async name => {
+  const bin = async name => {
     const f = files[name]; if (!f) return null;
     const lnl = dv.getUint16(f.off + 26, true), lxl = dv.getUint16(f.off + 28, true);
     const data = u8.subarray(f.off + 30 + lnl + lxl, f.off + 30 + lnl + lxl + f.csize);
-    const out = f.method === 0 ? data : await inflateRaw(data);
-    return new TextDecoder().decode(out);
+    return f.method === 0 ? data : await inflateRaw(data);
   };
+  const get = async name => { const b = await bin(name); return b && new TextDecoder().decode(b); };
+  get.bin = bin; get.names = Object.keys(files);
+  return get;
 }
 function colIdx(ref) { const m = /^([A-Z]+)/.exec(ref || ''); if (!m) return -1; let n = 0; for (const c of m[1]) n = n * 26 + c.charCodeAt(0) - 64; return n - 1; }
 async function readXlsx(buf) {
@@ -160,17 +162,37 @@ function toList(rows, fileName) {
   }
   return { id: uid(), name: fileName.replace(/\.(xlsx|csv|txt)$/i, ''), created: Date.now(), headers, nameCol, bcCol, f, items };
 }
+async function listsFromFile(name, buf) {   // ملف Excel/CSV واحد، أو ملف zip بيه عدة قوائم
+  const u = new Uint8Array(buf), isZip = u[0] === 0x50 && u[1] === 0x4b;
+  if (!isZip) return [toList(readCsv(new TextDecoder().decode(buf)), name)];
+  const get = await unzip(buf);
+  if (get.names.includes('xl/workbook.xml')) return [toList(await readXlsx(buf), name)];
+  const out = [];
+  for (const n of get.names.filter(x => /\.(xlsx|csv)$/i.test(x) && !/(^|\/)(__MACOSX|\.)/.test(x)).sort()) {
+    const b = await get.bin(n), ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+    out.push(...await listsFromFile(n.split('/').pop(), ab));
+  }
+  if (!out.length) throw new Error('ماكو ملفات Excel جوة الملف المضغوط');
+  return out;
+}
 $('#fileIn').addEventListener('change', async e => {
-  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  try {
-    const buf = await f.arrayBuffer();
-    const isXlsx = /\.xlsx$/i.test(f.name) || (new Uint8Array(buf)[0] === 0x50 && new Uint8Array(buf)[1] === 0x4b);
-    const rows = isXlsx ? await readXlsx(buf) : readCsv(new TextDecoder().decode(buf));
-    const list = toList(rows, f.name);
-    DB.lists.unshift(list); save();
-    S.view = 'list'; S.listId = list.id; S.filter = 'all'; render();
-    toast('انضافت ' + list.items.length + ' مادة', 'ok');
-  } catch (err) { toast('ما انقرى الملف: ' + (err.message || err), 'err'); }
+  const fs = [...e.target.files]; e.target.value = ''; if (!fs.length) return;
+  const added = [], skipped = [], bad = [];
+  for (const f of fs) {
+    try {
+      for (const list of await listsFromFile(f.name, await f.arrayBuffer())) {
+        if (DB.lists.some(l => l.name === list.name)) { skipped.push(list.name); continue; }
+        DB.lists.unshift(list); added.push(list);
+      }
+    } catch (err) { bad.push(f.name + ': ' + (err.message || err)); }
+  }
+  if (added.length) save();
+  if (added.length === 1 && !skipped.length) { S.view = 'list'; S.listId = added[0].id; S.filter = 'all'; }
+  else S.view = 'home';
+  render();
+  const msg = (added.length ? 'انضافت ' + added.length + ' قائمة (' + added.reduce((a, l) => a + l.items.length, 0) + ' مادة)' : 'ما انضافت ولا قائمة') +
+    (skipped.length ? ' — ' + skipped.length + ' موجودة من قبل وما تكررت' : '') + (bad.length ? ' — ما انقرى: ' + bad.join('، ') : '');
+  toast(msg, bad.length || !added.length ? 'err' : 'ok');
 });
 
 /* ================= الحالة والرسم ================= */
@@ -209,7 +231,7 @@ function homeView() {
       h('div', { class: 'bar' }, h('i', { style: { width: (bc / (t || 1) * 100) + '%' } })),
       h('div', { class: 'sub' }, bc + ' / ' + t + ' بيها باركود'));
   })));
-  const dock = h('div', { class: 'dock' }, h('div', { class: 'wrap' }, h('button', { class: 'btn primary block', onclick: () => $('#fileIn').click() }, '📄 استيراد قائمة (Excel)')));
+  const dock = h('div', { class: 'dock' }, h('div', { class: 'wrap' }, h('button', { class: 'btn primary block', onclick: () => $('#fileIn').click() }, '📄 استيراد قوائم (Excel أو zip)')));
   return h('div', {}, head, body, dock);
 }
 function filtered(l) {
