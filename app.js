@@ -260,10 +260,16 @@ function itemCard(l, it) {
   };
   const low = it.sell && inf.buy && it.sell <= inf.buy;
   const fields = it.status === 'miss' ? null : h('div', { class: 'fields' },
-    field('عدد القطع بالكرتون', null, it.pack, '—', v => { it.pack = v && v > 1 ? Math.round(v) : null; }, inf.cartons > 0 && !(it.pack > 1)),
-    field(inf.boxy ? 'سعر بيع الكرتون' : 'سعر بيع القطعة',
-      (inf.buy ? 'الشراء ' + money(inf.buy) : '') + (low ? ' — ⚠ أقل من الشراء' : (!it.sell && inf.buy ? (SELLMODE === 'guess' ? ' — فارغ = مقترح +' + MARKUP + '%' : ' — فارغ = يتسعّر بعدين') : '')),
-      it.sell, inf.buy && SELLMODE === 'guess' ? money(ceil250(inf.buy * (1 + MARKUP / 100))) : '—', v => { it.sell = v && v > 0 ? Math.round(v) : null; }, low, 'wide'));
+    field('عدد القطع بالكرتون', null, it.pack, '—', v => { const op = it.pack > 1 ? it.pack : 1, np = v && v > 1 ? Math.round(v) : null; if (it.sell && (np || 1) !== op) it.sell = Math.round(it.sell / op) * (np || 1); it.pack = np; }, inf.cartons > 0 && !(it.pack > 1)),
+    (() => {   // سعر البيع يُكتب بالمفرد، وينحفظ بالكرتون (مفرد × قطع بالكرتون) حتى يطلع صح بملف البرنامج
+      const pk = it.pack > 1 ? it.pack : (inf.boxy ? 0 : 1);
+      if (!pk) return field('سعر بيع الكرتون', 'اكتب «قطع بالكرتون» أول حتى تكتب سعر المفرد', it.sell, '—', v => { it.sell = v && v > 0 ? Math.round(v) : null; }, low, 'wide');
+      const unit = inf.buy ? inf.buy / pk : 0, cur = it.sell ? Math.round(it.sell / pk) : null;
+      const sub = (unit ? 'شراء القطعة ' + money(Math.round(unit)) : '') + (it.sell && pk > 1 ? ' — الكرتون ' + money(it.sell) : '') +
+        (low ? ' — ⚠ أقل من الشراء' : (!it.sell && inf.buy ? (SELLMODE === 'guess' ? ' — فارغ = مقترح +' + MARKUP + '%' : ' — فارغ = يتسعّر بعدين') : ''));
+      return field('سعر بيع المفرد', sub, cur, unit && SELLMODE === 'guess' ? money(ceil250(unit * (1 + MARKUP / 100))) : '—',
+        v => { it.sell = v && v > 0 ? Math.round(v) * pk : null; }, low, 'wide');
+    })());
   const g = b ? barcodeSvg(b, 56) : null;
   return h('div', { class: 'card item' + (b ? ' ok' : '') + (it.status === 'miss' ? ' miss' : '') },
     h('div', { class: 'itop' }, h('div', { class: 'idx' }, it.n), h('div', { class: 'grow' }, h('div', { class: 'iname' }, nameOf(l, it)), h('div', { class: 'imeta' }, meta(l, it)))),
