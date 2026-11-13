@@ -1,6 +1,6 @@
 'use strict';
 /* ماسح القوائم — تستورد قائمة Excel، وتمسح باركود كل مادة بكاميرا التلفون، وتصدّرها.
-   كل البيانات تبقى على التلفون (localStorage). ما يحتاج سيرفر ولا Claude. */
+   البيانات تنحفظ على التلفون وتتزامن بين كل التلفونات عن طريق Supabase (sync.js). */
 
 const $ = (s, r = document) => r.querySelector(s);
 function h(tag, attrs, ...kids) {
